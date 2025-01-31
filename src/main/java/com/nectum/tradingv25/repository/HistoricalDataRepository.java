@@ -24,6 +24,8 @@ public interface HistoricalDataRepository extends MongoRepository<HistoricalData
     @Query(value = "{ 'idnectum': ?0 }", exists = true)
     boolean existsByIdnectum(Long idnectum);
 
-    @Query(value = "{ 'idnectum': { $in: ?0 } }", exists = true)
-    List<Long> findExistingIdnectums(List<Long> idnectums);
-}
+    @Query(value = "{ 'idnectum': ?0 }", sort = "{ 'fecha': 1 }")
+    List<HistoricalData> findAllByIdnectumOrderByFechaAsc(Long idnectum);
+
+
+   }

@@ -1,43 +1,39 @@
 package com.nectum.tradingv25.indicator.custom;
 
 import org.ta4j.core.Indicator;
+import org.ta4j.core.indicators.RecursiveCachedIndicator;
 import org.ta4j.core.num.Num;
 
-public class MaxHIndicator extends org.ta4j.core.indicators.CachedIndicator<Num> {
+/**
+ * Calcula el valor máximo acumulado del indicador base (típicamente HighPriceIndicator)
+ * desde el índice 0 hasta el índice actual.
+ * maxh[i] = max(maxh[i-1], high[i]).
+ */
+public class MaxHIndicator extends RecursiveCachedIndicator<Num> {
 
-    private final Indicator<Num> highPriceIndicator;
-    private final int period;
+    private final Indicator<Num> highIndicator;
 
-    /**
-     * Constructor para el indicador MaxH.
-     *
-     * @param highPriceIndicator Indicador del precio alto (HighPriceIndicator).
-     * @param period             Período para el cálculo del máximo.
-     */
-    public MaxHIndicator(Indicator<Num> highPriceIndicator, int period) {
-        super(highPriceIndicator.getBarSeries());
-        this.highPriceIndicator = highPriceIndicator;
-        this.period = period;
+    public MaxHIndicator(Indicator<Num> highIndicator) {
+        super(highIndicator.getBarSeries());
+        this.highIndicator = highIndicator;
     }
 
     @Override
     protected Num calculate(int index) {
-        // Calcula el rango efectivo para el cálculo
-        int startIndex = Math.max(0, index - period + 1); // Asegura que no vaya más allá del índice 0
-        Num max = highPriceIndicator.getValue(startIndex);
-
-        // Busca el valor máximo en el rango
-        for (int i = startIndex + 1; i <= index; i++) {
-            Num currentValue = highPriceIndicator.getValue(i);
-            if (currentValue.isGreaterThan(max)) {
-                max = currentValue;
-            }
+        if (index == 0) {
+            // El primer valor de maxh es el high del primer bar
+            return highIndicator.getValue(0);
         }
-        return max;
+        // Cálculo recursivo: max entre el valor previo y el valor actual
+        Num previousMax = getValue(index - 1);
+        Num currentHigh = highIndicator.getValue(index);
+        return previousMax.isGreaterThan(currentHigh) ? previousMax : currentHigh;
     }
 
     @Override
     public int getUnstableBars() {
-        return period; // Período inicial inestable
+        // Si no consideras barras inestables, puedes devolver 0.
+        // O ajustarlo según la lógica de tu sistema.
+        return 0;
     }
 }

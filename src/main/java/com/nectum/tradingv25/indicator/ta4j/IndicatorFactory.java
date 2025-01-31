@@ -71,12 +71,12 @@ public class IndicatorFactory {
         Este indicador calcula el valor máximo del precio alto (High) dentro de un período especificado.
         Si el período es más largo que la cantidad de barras disponibles, tomará todas las barras disponibles.
         * */
-        INDICATOR_MAP.put("maxh: maxh", (series, p) ->
-                new MaxHIndicator(
-                        new HighPriceIndicator(series),
-                        p > 0 ? p : series.getBarCount() // Usa el período proporcionado o toda la serie
-                )
-        );
+        INDICATOR_MAP.put("maxh: maxh", (series, period) -> {
+            // 1) Creamos la base: HighPriceIndicator
+            Indicator<Num> highIndicator = new HighPriceIndicator(series);
+            // 2) Lo envolvemos en nuestro MaxHIndicator
+            return new MaxHIndicator(highIndicator);
+        });
 
 
 

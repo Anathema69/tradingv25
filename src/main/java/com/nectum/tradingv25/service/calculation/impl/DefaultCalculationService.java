@@ -37,35 +37,54 @@ public class DefaultCalculationService implements CalculationService {
         if (cached != null) {
             return cached;
         }
+
         // Not in cache => heavy compute
         List<ListCastResponse> responses = new ArrayList<>();
         for (Long idnectum : request.getIdnectums()) {
             responses.add(processIdNectum(idnectum, request));
         }
+
+        // Save in cache
         listCastCache.put(request, responses);
+
         return responses;
     }
 
     private ListCastResponse processIdNectum(Long idnectum, ListCastRequest request) {
-        // 1) read from Mongo
-        List<HistoricalData> historicalDataList = historicalDataRepository
-                .findByIdnectumAndFechaGreaterThanEqualOrderByFechaAsc(
-                        idnectum,
-                        parseDate(request.getStart())
-                );
+        // 1) Traer TODO el histórico
+        List<HistoricalData> allData = historicalDataRepository
+                .findAllByIdnectumOrderByFechaAsc(idnectum);
 
-        // 2) Construir la serie con DecimalNum
-        BarSeries series = ta4jIndicatorService.buildBarSeries("idnectum_" + idnectum, historicalDataList);
+        // 2) Construir la serie con ta4j (contiene 100% de los datos, p.e. 1990..2025)
+        BarSeries fullSeries = ta4jIndicatorService.buildBarSeries("idnectum_" + idnectum, allData);
 
-        // Caché local de indicadores
+        // Cache local de indicadores
         Map<String, Indicator<Num>> indicatorCache = new HashMap<>();
+
+        // 3) Ubicar la fecha de inicio para filtrar la parte que vamos a "mostrar"
+        Date startDate = parseDate(request.getStart());
+        // (Si también tienes "end" en el request, parsea endDate)
+
+        // Este array guardará los resultados que se devolverán en el JSON
         List<ListCastResultData> resultDataList = new ArrayList<>();
 
-        for (int i = 0; i < historicalDataList.size(); i++) {
-            HistoricalData hd = historicalDataList.get(i);
+        // 4) Recorrer las barras y "mostrar" sólo las que estén >= start
+        for (int i = 0; i < fullSeries.getBarCount(); i++) {
+            Date barDate = Date.from(fullSeries.getBar(i).getEndTime().toInstant());
 
+            // Filtrar: si la barra es anterior a startDate, no la mostramos
+            if (barDate.before(startDate)) {
+                continue;
+            }
+            // (si tienes "endDate", también filtrar barDate.after(endDate))
+
+            // localizamos la entidad HistoricalData correspondiente (i)
+            HistoricalData hd = allData.get(i);
+
+            // Estructura para almacenar valores
             OrderedResultData orderedData = new OrderedResultData();
-            // (a) OHLCV
+
+            // (a) Agregamos OHLCV
             orderedData.addOHLCV(
                     hd.getOpen(),
                     hd.getMaximo(),
@@ -74,20 +93,19 @@ public class DefaultCalculationService implements CalculationService {
                     hd.getVolumen() != null ? hd.getVolumen().doubleValue() : 0.0
             );
 
-            // (b) Conditions => indicators
+            // (b) Procesar las condiciones
             if (request.getList_conditions_entry() != null) {
                 processIndicatorsInOrder(
                         request.getList_conditions_entry(),
                         orderedData,
-                        series,
-                        i,
+                        fullSeries,
+                        i,                // barIndex actual
                         indicatorCache
                 );
             }
 
-            // (c) Ajustar la fecha +1 día sólo para JSON
-            Date displayedDate = adjustDateForOutput(hd.getFecha());
-            orderedData.setFecha(dateFormat.format(displayedDate));
+            // (c) Asignar la fecha en el resultado
+            orderedData.setFecha(dateFormat.format(barDate));
 
             orderedData.finalizeOrder();
             resultDataList.add(
@@ -97,34 +115,51 @@ public class DefaultCalculationService implements CalculationService {
             );
         }
 
+        // 5) Devolver la respuesta para este idnectum
         return ListCastResponse.builder()
                 .idnectum(idnectum)
                 .result(resultDataList)
                 .build();
     }
 
-    /**
-     * Suma 1 día para mostrar en JSON. No afecta la serie ta4j.
-     */
-    private Date adjustDateForOutput(Date originalDate) {
-        Calendar cal = Calendar.getInstance();
-        cal.setTime(originalDate);
-        //cal.add(Calendar.DAY_OF_MONTH, 1);
-        return cal.getTime();
-    }
 
+
+    /**
+     * Aplica cada condición en orden, calculando indicadores y comparándolos.
+     */
     private void processIndicatorsInOrder(List<ListCastCondition> conditions,
                                           OrderedResultData orderedData,
                                           BarSeries series,
-                                          int barIndex,
+                                          int currentBarIndex,
                                           Map<String, Indicator<Num>> indicatorCache) {
 
         for (int i = 0; i < conditions.size(); i++) {
             ListCastCondition cond = conditions.get(i);
 
-            double mainValue = ta4jIndicatorService.getIndicatorValue(
-                    series, barIndex, cond, indicatorCache, false
-            );
+            // =========================
+            // 1) Ajustar el day_offset para el indicador principal
+            // =========================
+            int offsetMain = (cond.getDay_offset() != null) ? cond.getDay_offset() : 0;
+            int offsetBarIndexMain = currentBarIndex + offsetMain;
+
+            // Manejo de rango para barIndex principal
+            double mainValue;
+            if (offsetBarIndexMain < 0 || offsetBarIndexMain >= series.getBarCount()) {
+                // Fuera de rango => 0.00 cuandp se desfasa la fecha
+                mainValue = 0.0;
+
+            } else {
+                // Llamar al ta4jIndicatorService con el barIndex desplazado
+                mainValue = ta4jIndicatorService.getIndicatorValue(
+                        series,
+                        offsetBarIndexMain,
+                        cond,
+                        indicatorCache,
+                        false // no es el other_indicator
+                );
+            }
+
+            // Nombre del indicador (para el JSON)
             String mainName = generateIndicatorName(
                     cond.getAsset_name(),
                     cond.getIndicator(),
@@ -135,11 +170,27 @@ public class DefaultCalculationService implements CalculationService {
             );
             orderedData.addIndicator(mainName, mainValue);
 
+            // =========================
+            // 2) Ajustar el day_offset para el "otro" indicador
+            // =========================
             double otherValue = Double.NaN;
             if (cond.getOther_indicator() != null) {
-                otherValue = ta4jIndicatorService.getIndicatorValue(
-                        series, barIndex, cond, indicatorCache, true
-                );
+                int offsetOther = (cond.getOther_day_offset() != null) ? cond.getOther_day_offset() : 0;
+                int offsetBarIndexOther = currentBarIndex + offsetOther;
+
+                if (offsetBarIndexOther < 0 || offsetBarIndexOther >= series.getBarCount()) {
+                    // Fuera de rango => 0.00 cuandp se desfasa la fecha
+                    otherValue = 0.0;
+                } else {
+                    otherValue = ta4jIndicatorService.getIndicatorValue(
+                            series,
+                            offsetBarIndexOther,
+                            cond,
+                            indicatorCache,
+                            true // es el other_indicator
+                    );
+                }
+                // Nombre para el JSON
                 String otherName = generateIndicatorName(
                         cond.getOther_asset_name(),
                         cond.getOther_indicator(),
@@ -151,17 +202,31 @@ public class DefaultCalculationService implements CalculationService {
                 orderedData.addIndicator(otherName, otherValue);
             }
 
+            // =========================
+            // 3) Hacer la comparación lógica (main vs other o vs const)
+            // =========================
             boolean decision = evaluateLogic(cond, mainValue, otherValue);
             orderedData.addEntryDecision(i, decision);
         }
     }
 
+    /**
+     * Aplica el operador lógico (==, <, <=, etc.) comparando mainVal vs otherVal o la constante.
+     */
     private boolean evaluateLogic(ListCastCondition cond, double mainVal, double otherVal) {
         double rightSide = (cond.getOther_indicator() != null)
                 ? otherVal
                 : (cond.getConstant() != null ? cond.getConstant() : 0.0);
 
+        // Si no hay operador definido
         if (cond.getLogic_operator() == null) return false;
+
+        // Si alguno es NaN, la comparación normalmente dará false (según lo que decidas)
+        if (Double.isNaN(mainVal) || Double.isNaN(rightSide)) {
+            // Podrías return false, o ignorar, depende de tu criterio
+            return false;
+        }
+
         switch (cond.getLogic_operator()) {
             case "<":  return mainVal <  rightSide;
             case "<=": return mainVal <= rightSide;
@@ -181,11 +246,11 @@ public class DefaultCalculationService implements CalculationService {
         return String.format(
                 "%d_%s_%d_%s_%d_%d",
                 assetName != null ? assetName : 0,
-                indicator,
+                indicator != null ? indicator : "NULL",
                 period != null ? period : 0,
                 operador != null ? operador : "sum",
-                nOperador != null ? nOperador.intValue() : 0,
-                dayOffset != null ? dayOffset : 0
+                (nOperador != null ? nOperador.intValue() : 0),
+                (dayOffset != null ? dayOffset : 0)
         );
     }
 
