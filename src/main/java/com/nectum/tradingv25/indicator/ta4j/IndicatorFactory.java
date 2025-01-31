@@ -499,12 +499,13 @@ public class IndicatorFactory {
 
     }
 
-    public Indicator<Num> createIndicator(BarSeries series, String rawName, int period) {
+    public static Indicator<Num> createIndicator(BarSeries series, String rawName, int period) {
         String key = rawName.trim().toLowerCase();
         IndicatorCreator creator = INDICATOR_MAP.get(key);
         if (creator != null) {
             return creator.apply(series, period);
         }
-        return new ClosePriceIndicator(series); // Fallback
+        // Fallback si no lo encuentras
+        return new ClosePriceIndicator(series);
     }
 }

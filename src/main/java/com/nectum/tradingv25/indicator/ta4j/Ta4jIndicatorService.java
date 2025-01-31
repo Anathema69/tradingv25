@@ -1,5 +1,6 @@
 package com.nectum.tradingv25.indicator.ta4j;
 
+import com.nectum.tradingv25.exception.InvalidIndicatorException;
 import com.nectum.tradingv25.model.entity.HistoricalData;
 import com.nectum.tradingv25.model.request.ListCastCondition;
 import lombok.extern.slf4j.Slf4j;
@@ -93,6 +94,24 @@ public class Ta4jIndicatorService {
 
         double baseValue = taIndicator.getValue(barIndex).doubleValue();
         return applyArithmetic(baseValue, operador, nOperador);
+    }
+
+    public Indicator<Num> createIndicator(BarSeries series, String indicatorName, Integer period) {
+        if (indicatorName == null) {
+            throw new InvalidIndicatorException("indicatorName no puede ser nulo");
+        }
+        if (period == null) {
+            period = 0;
+        }
+
+                // y que period es un int
+    
+        return IndicatorFactory.createIndicator(
+                series,
+                indicatorName.toLowerCase(),
+                period != null ? period : 0
+        );
+
     }
 
     private double applyArithmetic(double baseValue, String operador, double nOperador) {
