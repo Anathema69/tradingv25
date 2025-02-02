@@ -22,6 +22,9 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.*;
 
@@ -34,7 +37,23 @@ public class DefaultCalculationService implements CalculationService {
     private final Ta4jIndicatorService ta4jIndicatorService;
     private final ObjectMapper objectMapper;
 
-    private static final SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+
+    private Date parseDate(String dateStr) {
+        try {
+            LocalDate localDate = LocalDate.parse(dateStr.trim(), DATE_FORMATTER);
+            return Date.from(localDate.atStartOfDay(ZoneId.systemDefault()).toInstant());
+        } catch (Exception e) {
+            throw new RuntimeException("Error parsing date: " + dateStr, e);
+        }
+    }
+
+    private String formatDate(Date date) {
+        // Convertir Date a LocalDate usando la zona horaria del sistema
+        LocalDate localDate = date.toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
+        return DATE_FORMATTER.format(localDate);
+    }
+
 
     // --------------------------------------------------------------------
     // Implementación secuencial (ya existente)
@@ -109,7 +128,8 @@ public class DefaultCalculationService implements CalculationService {
                     }
 
                     // (c) Agregar la fecha
-                    ord.setFecha(sdf.format(hd.getFecha()));
+                    ord.setFecha(formatDate(hd.getFecha()));
+
 
                     // (d) Finalizar el objeto
                     ord.finalizeOrder();
@@ -222,13 +242,7 @@ public class DefaultCalculationService implements CalculationService {
         return cond.getIndicator() + "_" + cond.getPeriod();
     }
 
-    private Date parseDate(String dateStr) {
-        try {
-            return sdf.parse(dateStr);
-        } catch (Exception e) {
-            throw new RuntimeException("Error parsing date: " + dateStr, e);
-        }
-    }
+
 
     // --------------------------------------------------------------------
     // Implementación paralela nueva
@@ -363,7 +377,8 @@ public class DefaultCalculationService implements CalculationService {
                         );
                     }
 
-                    ord.setFecha(sdf.format(hd.getFecha()));
+                    ord.setFecha(formatDate(hd.getFecha()));
+
                     ord.finalizeOrder();
 
                     if (!firstRecord) {
