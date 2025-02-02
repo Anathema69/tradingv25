@@ -15,6 +15,8 @@ public class JacksonConfig {
         mapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
         mapper.enable(SerializationFeature.WRITE_BIGDECIMAL_AS_PLAIN);
         mapper.enable(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS);
+        // Deshabilitar pretty print para optimizar el tamaño del JSON
+        mapper.configure(SerializationFeature.INDENT_OUTPUT, false);
         return mapper;
     }
 }

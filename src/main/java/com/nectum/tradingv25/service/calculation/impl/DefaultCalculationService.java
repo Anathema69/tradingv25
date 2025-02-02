@@ -256,7 +256,7 @@ public class DefaultCalculationService implements CalculationService {
         log.info("Iniciando processConditionsStreamingParallel. Idnectums: {}", request.getIdnectums());
 
         int cores = Runtime.getRuntime().availableProcessors();
-        ExecutorService executor = Executors.newFixedThreadPool(cores);
+        ExecutorService executor = Executors.newFixedThreadPool(cores *2);
 
         // Generar una tarea (Callable) por cada idnectum
         List<Long> idNectums = request.getIdnectums();
@@ -305,7 +305,7 @@ public class DefaultCalculationService implements CalculationService {
             outputStream.write(result.getBytes());
             outputStream.flush();
 
-            log.info(">> idnectum {} escrito. Size en bytes: {}", idnectum, result.getBytes().length);
+
         }
 
         long endTime = System.currentTimeMillis();
@@ -403,8 +403,6 @@ public class DefaultCalculationService implements CalculationService {
             bos.flush();
 
             long t1 = System.currentTimeMillis();
-            log.debug("[idnectum={}] completado en {} ms, tamaño en bytes={}",
-                    idnectum, (t1 - t0), bos.size());
 
             return new IdNectumResult(idnectum, bos.toByteArray());
         }
