@@ -54,26 +54,22 @@ public class DefaultCalculationService implements CalculationService {
         return DATE_FORMATTER.format(localDate);
     }
 
-
     // --------------------------------------------------------------------
     // Implementación secuencial (ya existente)
     // --------------------------------------------------------------------
     @Override
     public void processConditionsStreaming(ListCastRequest request, OutputStream outputStream) throws IOException {
-
         Date startDate = parseDate(request.getStart());
 
         // Iteramos sobre cada idnectum
         for (Long idnectum : request.getIdnectums()) {
-
             // Escribe la cabecera del objeto JSON: {"idnectum":X,"result":[
             String jsonHead = String.format("{\"idnectum\":%d,\"result\":[", idnectum);
             outputStream.write(jsonHead.getBytes(StandardCharsets.UTF_8));
             outputStream.flush();
 
             boolean firstRecord = true;
-
-            // Aquí se almacena el estado acumulado para el idnectum (por ejemplo, un running max para "maxh")
+            // Aquí se almacena el estado acumulado para el idnectum (por ejemplo, running max para "maxh")
             Map<String, Object> globalState = new HashMap<>();
             globalState.put("runningMax", Double.NEGATIVE_INFINITY);
 
@@ -103,7 +99,6 @@ public class DefaultCalculationService implements CalculationService {
                 // Recorrer cada registro en la página
                 for (int i = 0; i < chunk.size(); i++) {
                     HistoricalData hd = chunk.get(i);
-
                     // (a) Crear un OrderedResultData (OHLCV + indicadores)
                     OrderedResultData ord = new OrderedResultData();
                     ord.addOHLCV(
@@ -114,8 +109,7 @@ public class DefaultCalculationService implements CalculationService {
                             hd.getVolumen() != null ? hd.getVolumen().doubleValue() : 0.0
                     );
 
-
-                    // (b) Procesar indicadores (por ejemplo, el "running max" o cualquier otro)
+                    // (b) Procesar indicadores (por ejemplo, "maxh" u otros)
                     if (request.getList_conditions_entry() != null) {
                         processIndicatorsInOrder(
                                 request.getList_conditions_entry(),
@@ -129,7 +123,6 @@ public class DefaultCalculationService implements CalculationService {
 
                     // (c) Agregar la fecha
                     ord.setFecha(formatDate(hd.getFecha()));
-
 
                     // (d) Finalizar el objeto
                     ord.finalizeOrder();
@@ -174,43 +167,76 @@ public class DefaultCalculationService implements CalculationService {
         for (int cIndex = 0; cIndex < conditions.size(); cIndex++) {
             ListCastCondition cond = conditions.get(cIndex);
 
-            // Ejemplo: Si el indicador es "maxh" se calcula un running max manual
+            // Procesamiento del indicador principal
+            double mainValue = Double.NaN;
             if (cond.getIndicator() != null && cond.getIndicator().toLowerCase().contains("maxh")) {
-                double runningMax = (double) globalState.getOrDefault("runningMax", Double.NEGATIVE_INFINITY);
-                double currentHigh = series.getBar(barIndex).getHighPrice().doubleValue();
-                double newMax = Math.max(runningMax, currentHigh);
-                globalState.put("runningMax", newMax);
-
-                String name = "maxh"; // o derivar el nombre a partir de cond
-                orderedData.addIndicator(name, newMax);
-
-                // Lógica de comparación (por ejemplo, operator, constante, etc.)
-                boolean decision = evaluateLogic(cond, newMax, cond.getConstant() != null ? cond.getConstant() : 0.0);
-                orderedData.addEntryDecision(cIndex, decision);
+                int period = (cond.getPeriod() != null) ? cond.getPeriod() : 14; // Valor por defecto
+                Indicator<Num> maxhIndicator = ta4jIndicatorService.getOrCreateIndicator(series, "maxh", period, indicatorCache);
+                mainValue = maxhIndicator.getValue(barIndex).doubleValue();
             } else {
-                // Lógica para otros indicadores (RSI, ADX, etc.)
                 int offset = (cond.getDay_offset() != null) ? cond.getDay_offset() : 0;
                 int offsetIndex = barIndex + offset;
-                double mainValue = Double.NaN;
                 if (offsetIndex >= 0 && offsetIndex < series.getBarCount()) {
                     mainValue = ta4jIndicatorService.getIndicatorValue(series, offsetIndex, cond, indicatorCache, false);
                 }
+            }
+            // Se genera el nombre usando la función unificada
+            String mainName = generateIndicatorName(cond, false);
+            orderedData.addIndicator(mainName, mainValue);
 
-                double otherValue = Double.NaN;
-                if (cond.getOther_indicator() != null) {
+            // Procesamiento del otro indicador (opcional)
+            double otherValue = Double.NaN;
+            if (cond.getOther_indicator() != null) {
+                if (cond.getOther_indicator().toLowerCase().contains("maxh")) {
+                    int period = (cond.getOther_period() != null) ? cond.getOther_period() : 14;
+                    Indicator<Num> maxhIndicator = ta4jIndicatorService.getOrCreateIndicator(series, "maxh", period, indicatorCache);
+                    otherValue = maxhIndicator.getValue(barIndex).doubleValue();
+                } else {
                     int offsetOther = (cond.getOther_day_offset() != null) ? cond.getOther_day_offset() : 0;
                     int offsetIndexOther = barIndex + offsetOther;
                     if (offsetIndexOther >= 0 && offsetIndexOther < series.getBarCount()) {
                         otherValue = ta4jIndicatorService.getIndicatorValue(series, offsetIndexOther, cond, indicatorCache, true);
                     }
                 }
-
-                String mainName = generateIndicatorName(cond);
-                orderedData.addIndicator(mainName, mainValue);
-
-                boolean decision = evaluateLogic(cond, mainValue, otherValue);
-                orderedData.addEntryDecision(cIndex, decision);
+                String otherName = generateIndicatorName(cond, true);
+                orderedData.addIndicator(otherName, otherValue);
             }
+
+            // Evaluación de la lógica de la condición
+            double comparisonValue = (cond.getOther_indicator() != null)
+                    ? otherValue
+                    : (cond.getConstant() != null ? cond.getConstant() : 0.0);
+            boolean decision = evaluateLogic(cond, mainValue, comparisonValue);
+            orderedData.addEntryDecision(cIndex, decision);
+        }
+    }
+
+    /**
+     * Función unificada que genera el nombre del indicador a partir del objeto cond.
+     * Si isOther es true, se utilizan los campos correspondientes a other_indicator;
+     * de lo contrario se utilizan los campos principales.
+     */
+    private String generateIndicatorName(ListCastCondition cond, boolean isOther) {
+        if (isOther) {
+            return String.format(
+                    "%d_%s_%d_%s_%d_%d",
+                    cond.getOther_asset_name() != null ? cond.getOther_asset_name() : 0,
+                    cond.getOther_indicator() != null ? cond.getOther_indicator() : "",
+                    cond.getOther_period() != null ? cond.getOther_period() : 0,
+                    cond.getOther_operador() != null ? cond.getOther_operador() : "sum",
+                    cond.getOther_n_operador() != null ? cond.getOther_n_operador().intValue() : 0,
+                    cond.getOther_day_offset() != null ? cond.getOther_day_offset() : 0
+            );
+        } else {
+            return String.format(
+                    "%d_%s_%d_%s_%d_%d",
+                    cond.getAsset_name() != null ? cond.getAsset_name() : 0,
+                    cond.getIndicator() != null ? cond.getIndicator() : "",
+                    cond.getPeriod() != null ? cond.getPeriod() : 0,
+                    cond.getOperador() != null ? cond.getOperador() : "sum",
+                    cond.getN_operador() != null ? cond.getN_operador().intValue() : 0,
+                    cond.getDay_offset() != null ? cond.getDay_offset() : 0
+            );
         }
     }
 
@@ -237,13 +263,6 @@ public class DefaultCalculationService implements CalculationService {
         }
     }
 
-    private String generateIndicatorName(ListCastCondition cond) {
-        // Por ejemplo: indicator_period
-        return cond.getIndicator() + "_" + cond.getPeriod();
-    }
-
-
-
     // --------------------------------------------------------------------
     // Implementación paralela nueva
     // --------------------------------------------------------------------
@@ -256,7 +275,7 @@ public class DefaultCalculationService implements CalculationService {
         log.info("Iniciando processConditionsStreamingParallel. Idnectums: {}", request.getIdnectums());
 
         int cores = Runtime.getRuntime().availableProcessors();
-        ExecutorService executor = Executors.newFixedThreadPool(cores *2);
+        ExecutorService executor = Executors.newFixedThreadPool(cores * 2);
 
         // Generar una tarea (Callable) por cada idnectum
         List<Long> idNectums = request.getIdnectums();
@@ -295,7 +314,7 @@ public class DefaultCalculationService implements CalculationService {
                 throw new RuntimeException("El hilo principal fue interrumpido al esperar future", e);
             }
 
-            // Escribir el JSON resultante para el idnectum (cada objeto en una línea o separados por comas, según el formato deseado)
+            // Escribir el JSON resultante para el idnectum
             if (!firstId) {
                 // Opcional: agregar separador (por ejemplo, salto de línea)
                 // outputStream.write('\n');
@@ -304,8 +323,6 @@ public class DefaultCalculationService implements CalculationService {
 
             outputStream.write(result.getBytes());
             outputStream.flush();
-
-
         }
 
         long endTime = System.currentTimeMillis();
@@ -319,14 +336,12 @@ public class DefaultCalculationService implements CalculationService {
     private IdNectumResult processSingleIdNectumToBytes(Long idnectum, ListCastRequest request) throws IOException {
         long t0 = System.currentTimeMillis();
 
-
         try (ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
 
             // Cabecera JSON: {"idnectum":123,"result":[
             bos.write(("{\"idnectum\":" + idnectum + ",\"result\":[").getBytes(StandardCharsets.UTF_8));
 
             boolean firstRecord = true;
-
             // Estado acumulado para este idnectum (por ejemplo, running max)
             Map<String, Object> globalState = new HashMap<>();
             globalState.put("runningMax", Double.NEGATIVE_INFINITY);
@@ -365,7 +380,6 @@ public class DefaultCalculationService implements CalculationService {
                             hd.getVolumen() != null ? hd.getVolumen().doubleValue() : 0.0
                     );
 
-
                     if (request.getList_conditions_entry() != null) {
                         processIndicatorsInOrder(
                                 request.getList_conditions_entry(),
@@ -378,7 +392,6 @@ public class DefaultCalculationService implements CalculationService {
                     }
 
                     ord.setFecha(formatDate(hd.getFecha()));
-
                     ord.finalizeOrder();
 
                     if (!firstRecord) {
@@ -401,7 +414,6 @@ public class DefaultCalculationService implements CalculationService {
             bos.write('\n');
 
             bos.flush();
-
             long t1 = System.currentTimeMillis();
 
             return new IdNectumResult(idnectum, bos.toByteArray());
