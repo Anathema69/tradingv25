@@ -5,9 +5,14 @@ import java.io.IOException;
 import java.io.OutputStream;
 
 public interface CalculationService {
+
     /**
-     * Procesa las condiciones en modo "streaming" y va escribiendo
-     * el resultado JSON al OutputStream.
+     * Versión existente: streaming secuencial
      */
     void processConditionsStreaming(ListCastRequest request, OutputStream outputStream) throws IOException;
+
+    /**
+     * Nueva versión: streaming en paralelo por idnectum
+     */
+    void processConditionsStreamingParallel(ListCastRequest request, OutputStream outputStream) throws IOException;
 }

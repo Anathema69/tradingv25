@@ -17,15 +17,13 @@ public class TradingController {
 
     private final CalculationService calculationService;
 
-    @PostMapping(value = "/list_cast_conditions", produces = MediaType.APPLICATION_JSON_VALUE)
+    @PostMapping(value = "/list_cast_conditions", produces = "application/json")
     public StreamingResponseBody streamListCastConditions(@RequestBody ListCastRequest request) {
+        // Devuelves un StreamingResponseBody
         return outputStream -> {
-            // Quitar cualquier header Content-Length que Spring intente setear
-            // A veces se puede hacer un HttpServletResponse response = ...
-            //  y llamar response.setHeader("Transfer-Encoding", "chunked");
-            //  response.setHeader("Content-Length", null);
-            calculationService.processConditionsStreaming(request, outputStream);
+            calculationService.processConditionsStreamingParallel(request, outputStream);
         };
     }
+
 
 }
