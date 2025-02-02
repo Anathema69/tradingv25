@@ -1,10 +1,13 @@
 package com.nectum.tradingv25.service.calculation;
 
 import com.nectum.tradingv25.model.request.ListCastRequest;
-import com.nectum.tradingv25.model.response.ListCastResponse;
-
-import java.util.List;
+import java.io.IOException;
+import java.io.OutputStream;
 
 public interface CalculationService {
-    List<ListCastResponse> processConditions(ListCastRequest request);
+    /**
+     * Procesa las condiciones en modo "streaming" y va escribiendo
+     * el resultado JSON al OutputStream.
+     */
+    void processConditionsStreaming(ListCastRequest request, OutputStream outputStream) throws IOException;
 }
